@@ -1,344 +1,1001 @@
+ifeq ("$(origin O)", "command line")
+	OUTPUT := $(O)/
+endif
+
+# The default target of this Makefile is...
+all:
+
+include config/utilities.mak
+
+ifneq ($(OUTPUT),)
+# check that the output directory actually exists
+OUTDIR := $(shell cd $(OUTPUT) && /bin/pwd)
+$(if $(OUTDIR),, $(error output directory "$(OUTPUT)" does not exist))
+endif
+
+# Define V to have a more verbose compile.
 #
-# arch/arm/Makefile
+# Define O to save output files in a separate directory.
 #
-# This file is included by the global makefile so that you can add your own
-# architecture-specific flags and dependencies.
+# Define ARCH as name of target architecture if you want cross-builds.
 #
-# This file is subject to the terms and conditions of the GNU General Public
-# License.  See the file "COPYING" in the main directory of this archive
-# for more details.
+# Define CROSS_COMPILE as prefix name of compiler if you want cross-builds.
 #
-# Copyright (C) 1995-2001 by Russell King
+# Define NO_LIBPERL to disable perl script extension.
+#
+# Define NO_LIBPYTHON to disable python script extension.
+#
+# Define PYTHON to point to the python binary if the default
+# `python' is not correct; for example: PYTHON=python2
+#
+# Define PYTHON_CONFIG to point to the python-config binary if
+# the default `$(PYTHON)-config' is not correct.
+#
+# Define ASCIIDOC8 if you want to format documentation with AsciiDoc 8
+#
+# Define DOCBOOK_XSL_172 if you want to format man pages with DocBook XSL v1.72.
+#
+# Define LDFLAGS=-static to build a static binary.
+#
+# Define EXTRA_CFLAGS=-m64 or EXTRA_CFLAGS=-m32 as appropriate for cross-builds.
+#
+# Define NO_DWARF if you do not want debug-info analysis feature at all.
+#
+# Define WERROR=0 to disable treating any warnings as errors.
+#
+# Define NO_NEWT if you do not want TUI support.
+#
+# Define NO_DEMANGLE if you do not want C++ symbol demangling.
 
-LDFLAGS_vmlinux	:=-p --no-undefined -X
-ifeq ($(CONFIG_CPU_ENDIAN_BE8),y)
-LDFLAGS_vmlinux	+= --be8
+$(OUTPUT)PERF-VERSION-FILE: .FORCE-PERF-VERSION-FILE
+	@$(SHELL_PATH) util/PERF-VERSION-GEN $(OUTPUT)
+-include $(OUTPUT)PERF-VERSION-FILE
+
+uname_M := $(shell uname -m 2>/dev/null || echo not)
+
+ARCH ?= $(shell echo $(uname_M) | sed -e s/i.86/i386/ -e s/sun4u/sparc64/ \
+				  -e s/arm.*/arm/ -e s/sa110/arm/ \
+				  -e s/s390x/s390/ -e s/parisc64/parisc/ \
+				  -e s/ppc.*/powerpc/ -e s/mips.*/mips/ \
+				  -e s/sh[234].*/sh/ )
+
+CC = $(CROSS_COMPILE)gcc
+AR = $(CROSS_COMPILE)ar
+
+# Additional ARCH settings for x86
+ifeq ($(ARCH),i386)
+        ARCH := x86
+endif
+ifeq ($(ARCH),x86_64)
+	ARCH := x86
+	IS_X86_64 := 0
+	ifeq (, $(findstring m32,$(EXTRA_CFLAGS)))
+		IS_X86_64 := $(shell echo __x86_64__ | ${CC} -E -xc - | tail -n 1)
+	endif
+	ifeq (${IS_X86_64}, 1)
+		RAW_ARCH := x86_64
+		ARCH_CFLAGS := -DARCH_X86_64
+		ARCH_INCLUDE = ../../arch/x86/lib/memcpy_64.S ../../arch/x86/lib/memset_64.S
+	endif
 endif
 
-OBJCOPYFLAGS	:=-O binary -R .comment -S
-GZFLAGS		:=-9
-#KBUILD_CFLAGS	+=-pipe
-# Explicitly specifiy 32-bit ARM ISA since toolchain default can be -mthumb:
-KBUILD_CFLAGS	+=$(call cc-option,-marm,)
-
-# Never generate .eh_frame
-KBUILD_CFLAGS	+= $(call cc-option,-fno-dwarf2-cfi-asm)
-
-# Do not use arch/arm/defconfig - it's always outdated.
-# Select a platform tht is kept up-to-date
-KBUILD_DEFCONFIG := versatile_defconfig
-
-# defines filename extension depending memory management type.
-ifeq ($(CONFIG_MMU),)
-MMUEXT		:= -nommu
+# Treat warnings as errors unless directed not to
+ifneq ($(WERROR),0)
+	CFLAGS_WERROR := -Werror
 endif
 
-ifeq ($(CONFIG_FRAME_POINTER),y)
-KBUILD_CFLAGS	+=-fno-omit-frame-pointer -mapcs -mno-sched-prolog
+#
+# Include saner warnings here, which can catch bugs:
+#
+
+EXTRA_WARNINGS := -Wformat
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wformat-security
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wformat-y2k
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wshadow
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Winit-self
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wpacked
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wredundant-decls
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wswitch-default
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wswitch-enum
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wno-system-headers
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wundef
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wwrite-strings
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wbad-function-cast
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wmissing-declarations
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wmissing-prototypes
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wnested-externs
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wold-style-definition
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wstrict-prototypes
+EXTRA_WARNINGS := $(EXTRA_WARNINGS) -Wdeclaration-after-statement
+
+ifeq ("$(origin DEBUG)", "command line")
+  PERF_DEBUG = $(DEBUG)
+endif
+ifndef PERF_DEBUG
+  CFLAGS_OPTIMIZE = -O6
 endif
 
-ifeq ($(CONFIG_CC_STACKPROTECTOR),y)
-KBUILD_CFLAGS	+=-fstack-protector
-endif
+CFLAGS = -fno-omit-frame-pointer -ggdb3 -Wall -Wextra -std=gnu99 $(CFLAGS_WERROR) $(CFLAGS_OPTIMIZE) -D_FORTIFY_SOURCE=2 $(EXTRA_WARNINGS) $(EXTRA_CFLAGS)
+EXTLIBS = -lpthread -lrt -lelf -lm
+ALL_CFLAGS = $(CFLAGS) -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE
+ALL_LDFLAGS = $(LDFLAGS)
+STRIP ?= strip
 
-ifeq ($(CONFIG_CPU_BIG_ENDIAN),y)
-KBUILD_CPPFLAGS	+= -mbig-endian
-AS		+= -EB
-LD		+= -EB
+# Among the variables below, these:
+#   perfexecdir
+#   template_dir
+#   mandir
+#   infodir
+#   htmldir
+#   ETC_PERFCONFIG (but not sysconfdir)
+# can be specified as a relative path some/where/else;
+# this is interpreted as relative to $(prefix) and "perf" at
+# runtime figures out where they are based on the path to the executable.
+# This can help installing the suite in a relocatable way.
+
+# Make the path relative to DESTDIR, not to prefix
+ifndef DESTDIR
+prefix = $(HOME)
+endif
+bindir_relative = bin
+bindir = $(prefix)/$(bindir_relative)
+mandir = share/man
+infodir = share/info
+perfexecdir = libexec/perf-core
+sharedir = $(prefix)/share
+template_dir = share/perf-core/templates
+htmldir = share/doc/perf-doc
+ifeq ($(prefix),/usr)
+sysconfdir = /etc
+ETC_PERFCONFIG = $(sysconfdir)/perfconfig
 else
-KBUILD_CPPFLAGS	+= -mlittle-endian
-AS		+= -EL
-LD		+= -EL
+sysconfdir = $(prefix)/etc
+ETC_PERFCONFIG = etc/perfconfig
+endif
+lib = lib
+
+export prefix bindir sharedir sysconfdir
+
+RM = rm -f
+MKDIR = mkdir
+FIND = find
+INSTALL = install
+
+# sparse is architecture-neutral, which means that we need to tell it
+# explicitly what architecture to check for. Fix this up for yours..
+SPARSE_FLAGS = -D__BIG_ENDIAN__ -D__powerpc__
+
+-include config/feature-tests.mak
+
+ifeq ($(call try-cc,$(SOURCE_HELLO),-Werror -fstack-protector-all),y)
+	CFLAGS := $(CFLAGS) -fstack-protector-all
 endif
 
-comma = ,
-
-# This selects which instruction set is used.
-# Note that GCC does not numerically define an architecture version
-# macro, but instead defines a whole series of macros which makes
-# testing for a specific architecture or later rather impossible.
-# Fix for android inline kernel building with armv7 and krait.
-arch-$(CONFIG_CPU_32v7)		:=-D__LINUX_ARM_ARCH__=7 $(call cc-option,-mcpu=cortex-a15,-march=armv5t -Wa$(comma)-mcpu=cortex-a15,-mthumb)
-arch-$(CONFIG_CPU_32v6)		:=-D__LINUX_ARM_ARCH__=6 $(call cc-option,-march=armv6,-march=armv5t -Wa$(comma)-march=armv6)
-# Only override the compiler option if ARMv6. The ARMv6K extensions are
-# always available in ARMv7
-ifeq ($(CONFIG_CPU_32v6),y)
-arch-$(CONFIG_CPU_32v6K)	:=-D__LINUX_ARM_ARCH__=6 $(call cc-option,-march=armv6k,-march=armv5t -Wa$(comma)-march=armv6k)
+ifeq ($(call try-cc,$(SOURCE_HELLO),-Werror -Wstack-protector),y)
+       CFLAGS := $(CFLAGS) -Wstack-protector
 endif
-arch-$(CONFIG_CPU_32v5)		:=-D__LINUX_ARM_ARCH__=5 $(call cc-option,-march=armv5te,-march=armv4t)
-arch-$(CONFIG_CPU_32v4T)	:=-D__LINUX_ARM_ARCH__=4 -march=armv4t
-arch-$(CONFIG_CPU_32v4)		:=-D__LINUX_ARM_ARCH__=4 -march=armv4
-arch-$(CONFIG_CPU_32v3)		:=-D__LINUX_ARM_ARCH__=3 -march=armv3
 
-# Since 'cortex-a15' is a superset of the 'armv7-a' arch spec, we need to
-# explicitly redefine the arch options to not include '-march=armv7-a' when
-# generating code for Krait, which is compatible with the instruction set of the
-# Cortex-A15, because GCC will warn us about ambiguous ISA restrictions caused
-# by seemingly conflicting -march and -mcpu options.
-# If $(CC) does not support the -mcpu=cortex-a15 option, fall back on passing
-# -march=armv7-a to specify the ISA restriction, though this is suboptimal. To
-# keep things simpler, we don't bother with a fallback option if the compiler
-# doesn't even support -march=armv7-a, since in that situation we would have
-# bigger problems.
-arch-$(CONFIG_ARCH_MSM_KRAIT)	:=-D__LINUX_ARM_ARCH__=7 $(call cc-option,-mcpu=cortex-a15,-march=armv7-a)
+ifeq ($(call try-cc,$(SOURCE_HELLO),-Werror -Wvolatile-register-var),y)
+       CFLAGS := $(CFLAGS) -Wvolatile-register-var
+endif
 
-# This selects how we optimise for the processor.
-tune-$(CONFIG_CPU_ARM610)	:=-mtune=arm610
-tune-$(CONFIG_CPU_ARM710)	:=-mtune=arm710
-tune-$(CONFIG_CPU_ARM7TDMI)	:=-mtune=arm7tdmi
-tune-$(CONFIG_CPU_ARM720T)	:=-mtune=arm7tdmi
-tune-$(CONFIG_CPU_ARM740T)	:=-mtune=arm7tdmi
-tune-$(CONFIG_CPU_ARM9TDMI)	:=-mtune=arm9tdmi
-tune-$(CONFIG_CPU_ARM940T)	:=-mtune=arm9tdmi
-tune-$(CONFIG_CPU_ARM946E)	:=$(call cc-option,-mtune=arm9e,-mtune=arm9tdmi)
-tune-$(CONFIG_CPU_ARM920T)	:=-mtune=arm9tdmi
-tune-$(CONFIG_CPU_ARM922T)	:=-mtune=arm9tdmi
-tune-$(CONFIG_CPU_ARM925T)	:=-mtune=arm9tdmi
-tune-$(CONFIG_CPU_ARM926T)	:=-mtune=arm9tdmi
-tune-$(CONFIG_CPU_FA526)	:=-mtune=arm9tdmi
-tune-$(CONFIG_CPU_SA110)	:=-mtune=strongarm110
-tune-$(CONFIG_CPU_SA1100)	:=-mtune=strongarm1100
-tune-$(CONFIG_CPU_XSCALE)	:=$(call cc-option,-mtune=xscale,-mtune=strongarm110) -Wa,-mcpu=xscale
-tune-$(CONFIG_CPU_XSC3)		:=$(call cc-option,-mtune=xscale,-mtune=strongarm110) -Wa,-mcpu=xscale
-tune-$(CONFIG_CPU_FEROCEON)	:=$(call cc-option,-mtune=marvell-f,-mtune=xscale)
-tune-$(CONFIG_CPU_V6)		:=$(call cc-option,-mtune=arm1136j-s,-mtune=strongarm)
-tune-$(CONFIG_CPU_V6K)		:=$(call cc-option,-mtune=arm1136j-s,-mtune=strongarm)
+### --- END CONFIGURATION SECTION ---
 
-ifeq ($(CONFIG_AEABI),y)
-CFLAGS_ABI	:=-mabi=aapcs-linux -mno-thumb-interwork
+BASIC_CFLAGS = -Iutil/include -Iarch/$(ARCH)/include -I$(OUTPUT)/util -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE
+BASIC_LDFLAGS =
+
+# Guard against environment variables
+BUILTIN_OBJS =
+LIB_H =
+LIB_OBJS =
+PYRF_OBJS =
+SCRIPT_SH =
+
+SCRIPT_SH += perf-archive.sh
+
+grep-libs = $(filter -l%,$(1))
+strip-libs = $(filter-out -l%,$(1))
+
+PYTHON_EXT_SRCS := $(shell grep -v ^\# util/python-ext-sources)
+PYTHON_EXT_DEPS := util/python-ext-sources util/setup.py
+
+$(OUTPUT)python/perf.so: $(PYRF_OBJS) $(PYTHON_EXT_SRCS) $(PYTHON_EXT_DEPS)
+	$(QUIET_GEN)CFLAGS='$(BASIC_CFLAGS)' $(PYTHON_WORD) util/setup.py \
+	  --quiet build_ext; \
+	mkdir -p $(OUTPUT)python && \
+	cp $(PYTHON_EXTBUILD_LIB)perf.so $(OUTPUT)python/
+#
+# No Perl scripts right now:
+#
+
+SCRIPTS = $(patsubst %.sh,%,$(SCRIPT_SH))
+
+#
+# Single 'perf' binary right now:
+#
+PROGRAMS += $(OUTPUT)perf
+
+LANG_BINDINGS =
+
+# what 'all' will build and 'install' will install, in perfexecdir
+ALL_PROGRAMS = $(PROGRAMS) $(SCRIPTS)
+
+# what 'all' will build but not install in perfexecdir
+OTHER_PROGRAMS = $(OUTPUT)perf
+
+# Set paths to tools early so that they can be used for version tests.
+ifndef SHELL_PATH
+	SHELL_PATH = /bin/sh
+endif
+ifndef PERL_PATH
+	PERL_PATH = /usr/bin/perl
+endif
+
+export PERL_PATH
+
+FLEX = flex
+BISON= bison
+
+$(OUTPUT)util/parse-events-flex.c: util/parse-events.l
+	$(QUIET_FLEX)$(FLEX) --header-file=$(OUTPUT)util/parse-events-flex.h -t util/parse-events.l > $(OUTPUT)util/parse-events-flex.c
+
+$(OUTPUT)util/parse-events-bison.c: util/parse-events.y
+	$(QUIET_BISON)$(BISON) -v util/parse-events.y -d -o $(OUTPUT)util/parse-events-bison.c
+
+$(OUTPUT)util/pmu-flex.c: util/pmu.l
+	$(QUIET_FLEX)$(FLEX) --header-file=$(OUTPUT)util/pmu-flex.h -t util/pmu.l > $(OUTPUT)util/pmu-flex.c
+
+$(OUTPUT)util/pmu-bison.c: util/pmu.y
+	$(QUIET_BISON)$(BISON) -v util/pmu.y -d -o $(OUTPUT)util/pmu-bison.c
+
+$(OUTPUT)util/parse-events.o: $(OUTPUT)util/parse-events-flex.c $(OUTPUT)util/parse-events-bison.c
+$(OUTPUT)util/pmu.o: $(OUTPUT)util/pmu-flex.c $(OUTPUT)util/pmu-bison.c
+
+LIB_FILE=$(OUTPUT)libperf.a
+
+LIB_H += ../../include/linux/perf_event.h
+LIB_H += ../../include/linux/rbtree.h
+LIB_H += ../../include/linux/list.h
+LIB_H += ../../include/linux/const.h
+LIB_H += ../../include/linux/hash.h
+LIB_H += ../../include/linux/stringify.h
+LIB_H += util/include/linux/bitmap.h
+LIB_H += util/include/linux/bitops.h
+LIB_H += util/include/linux/compiler.h
+LIB_H += util/include/linux/const.h
+LIB_H += util/include/linux/ctype.h
+LIB_H += util/include/linux/kernel.h
+LIB_H += util/include/linux/list.h
+LIB_H += util/include/linux/export.h
+LIB_H += util/include/linux/poison.h
+LIB_H += util/include/linux/prefetch.h
+LIB_H += util/include/linux/rbtree.h
+LIB_H += util/include/linux/string.h
+LIB_H += util/include/linux/types.h
+LIB_H += util/include/linux/linkage.h
+LIB_H += util/include/asm/asm-offsets.h
+LIB_H += util/include/asm/bug.h
+LIB_H += util/include/asm/byteorder.h
+LIB_H += util/include/asm/hweight.h
+LIB_H += util/include/asm/swab.h
+LIB_H += util/include/asm/system.h
+LIB_H += util/include/asm/uaccess.h
+LIB_H += util/include/dwarf-regs.h
+LIB_H += util/include/asm/dwarf2.h
+LIB_H += util/include/asm/cpufeature.h
+LIB_H += util/include/asm/unistd_32.h
+LIB_H += util/include/asm/unistd_64.h
+LIB_H += perf.h
+LIB_H += util/annotate.h
+LIB_H += util/cache.h
+LIB_H += util/callchain.h
+LIB_H += util/build-id.h
+LIB_H += util/debug.h
+LIB_H += util/debugfs.h
+LIB_H += util/sysfs.h
+LIB_H += util/pmu.h
+LIB_H += util/event.h
+LIB_H += util/evsel.h
+LIB_H += util/evlist.h
+LIB_H += util/exec_cmd.h
+LIB_H += util/types.h
+LIB_H += util/levenshtein.h
+LIB_H += util/map.h
+LIB_H += util/parse-options.h
+LIB_H += util/parse-events.h
+LIB_H += util/quote.h
+LIB_H += util/util.h
+LIB_H += util/xyarray.h
+LIB_H += util/header.h
+LIB_H += util/help.h
+LIB_H += util/session.h
+LIB_H += util/strbuf.h
+LIB_H += util/strlist.h
+LIB_H += util/strfilter.h
+LIB_H += util/svghelper.h
+LIB_H += util/tool.h
+LIB_H += util/run-command.h
+LIB_H += util/sigchain.h
+LIB_H += util/symbol.h
+LIB_H += util/color.h
+LIB_H += util/values.h
+LIB_H += util/sort.h
+LIB_H += util/hist.h
+LIB_H += util/thread.h
+LIB_H += util/thread_map.h
+LIB_H += util/trace-event.h
+LIB_H += util/probe-finder.h
+LIB_H += util/dwarf-aux.h
+LIB_H += util/probe-event.h
+LIB_H += util/pstack.h
+LIB_H += util/cpumap.h
+LIB_H += util/top.h
+LIB_H += $(ARCH_INCLUDE)
+LIB_H += util/cgroup.h
+
+LIB_OBJS += $(OUTPUT)util/abspath.o
+LIB_OBJS += $(OUTPUT)util/alias.o
+LIB_OBJS += $(OUTPUT)util/annotate.o
+LIB_OBJS += $(OUTPUT)util/build-id.o
+LIB_OBJS += $(OUTPUT)util/config.o
+LIB_OBJS += $(OUTPUT)util/ctype.o
+LIB_OBJS += $(OUTPUT)util/debugfs.o
+LIB_OBJS += $(OUTPUT)util/sysfs.o
+LIB_OBJS += $(OUTPUT)util/pmu.o
+LIB_OBJS += $(OUTPUT)util/environment.o
+LIB_OBJS += $(OUTPUT)util/event.o
+LIB_OBJS += $(OUTPUT)util/evlist.o
+LIB_OBJS += $(OUTPUT)util/evsel.o
+LIB_OBJS += $(OUTPUT)util/exec_cmd.o
+LIB_OBJS += $(OUTPUT)util/help.o
+LIB_OBJS += $(OUTPUT)util/levenshtein.o
+LIB_OBJS += $(OUTPUT)util/parse-options.o
+LIB_OBJS += $(OUTPUT)util/parse-events.o
+LIB_OBJS += $(OUTPUT)util/path.o
+LIB_OBJS += $(OUTPUT)util/rbtree.o
+LIB_OBJS += $(OUTPUT)util/bitmap.o
+LIB_OBJS += $(OUTPUT)util/hweight.o
+LIB_OBJS += $(OUTPUT)util/run-command.o
+LIB_OBJS += $(OUTPUT)util/quote.o
+LIB_OBJS += $(OUTPUT)util/strbuf.o
+LIB_OBJS += $(OUTPUT)util/string.o
+LIB_OBJS += $(OUTPUT)util/strlist.o
+LIB_OBJS += $(OUTPUT)util/strfilter.o
+LIB_OBJS += $(OUTPUT)util/top.o
+LIB_OBJS += $(OUTPUT)util/usage.o
+LIB_OBJS += $(OUTPUT)util/wrapper.o
+LIB_OBJS += $(OUTPUT)util/sigchain.o
+LIB_OBJS += $(OUTPUT)util/symbol.o
+LIB_OBJS += $(OUTPUT)util/color.o
+LIB_OBJS += $(OUTPUT)util/pager.o
+LIB_OBJS += $(OUTPUT)util/header.o
+LIB_OBJS += $(OUTPUT)util/callchain.o
+LIB_OBJS += $(OUTPUT)util/values.o
+LIB_OBJS += $(OUTPUT)util/debug.o
+LIB_OBJS += $(OUTPUT)util/map.o
+LIB_OBJS += $(OUTPUT)util/pstack.o
+LIB_OBJS += $(OUTPUT)util/session.o
+LIB_OBJS += $(OUTPUT)util/thread.o
+LIB_OBJS += $(OUTPUT)util/thread_map.o
+LIB_OBJS += $(OUTPUT)util/trace-event-parse.o
+LIB_OBJS += $(OUTPUT)util/parse-events-flex.o
+LIB_OBJS += $(OUTPUT)util/parse-events-bison.o
+LIB_OBJS += $(OUTPUT)util/pmu-flex.o
+LIB_OBJS += $(OUTPUT)util/pmu-bison.o
+LIB_OBJS += $(OUTPUT)util/trace-event-read.o
+LIB_OBJS += $(OUTPUT)util/trace-event-info.o
+LIB_OBJS += $(OUTPUT)util/trace-event-scripting.o
+LIB_OBJS += $(OUTPUT)util/svghelper.o
+LIB_OBJS += $(OUTPUT)util/sort.o
+LIB_OBJS += $(OUTPUT)util/hist.o
+LIB_OBJS += $(OUTPUT)util/probe-event.o
+LIB_OBJS += $(OUTPUT)util/util.o
+LIB_OBJS += $(OUTPUT)util/xyarray.o
+LIB_OBJS += $(OUTPUT)util/cpumap.o
+LIB_OBJS += $(OUTPUT)util/cgroup.o
+
+BUILTIN_OBJS += $(OUTPUT)builtin-annotate.o
+
+BUILTIN_OBJS += $(OUTPUT)builtin-bench.o
+
+# Benchmark modules
+BUILTIN_OBJS += $(OUTPUT)bench/sched-messaging.o
+BUILTIN_OBJS += $(OUTPUT)bench/sched-pipe.o
+ifeq ($(RAW_ARCH),x86_64)
+BUILTIN_OBJS += $(OUTPUT)bench/mem-memcpy-x86-64-asm.o
+BUILTIN_OBJS += $(OUTPUT)bench/mem-memset-x86-64-asm.o
+endif
+BUILTIN_OBJS += $(OUTPUT)bench/mem-memcpy.o
+BUILTIN_OBJS += $(OUTPUT)bench/mem-memset.o
+
+BUILTIN_OBJS += $(OUTPUT)builtin-diff.o
+BUILTIN_OBJS += $(OUTPUT)builtin-evlist.o
+BUILTIN_OBJS += $(OUTPUT)builtin-help.o
+BUILTIN_OBJS += $(OUTPUT)builtin-sched.o
+BUILTIN_OBJS += $(OUTPUT)builtin-buildid-list.o
+BUILTIN_OBJS += $(OUTPUT)builtin-buildid-cache.o
+BUILTIN_OBJS += $(OUTPUT)builtin-list.o
+BUILTIN_OBJS += $(OUTPUT)builtin-record.o
+BUILTIN_OBJS += $(OUTPUT)builtin-report.o
+BUILTIN_OBJS += $(OUTPUT)builtin-stat.o
+BUILTIN_OBJS += $(OUTPUT)builtin-periodic.o
+BUILTIN_OBJS += $(OUTPUT)builtin-timechart.o
+BUILTIN_OBJS += $(OUTPUT)builtin-top.o
+BUILTIN_OBJS += $(OUTPUT)builtin-script.o
+BUILTIN_OBJS += $(OUTPUT)builtin-probe.o
+BUILTIN_OBJS += $(OUTPUT)builtin-kmem.o
+BUILTIN_OBJS += $(OUTPUT)builtin-lock.o
+BUILTIN_OBJS += $(OUTPUT)builtin-kvm.o
+BUILTIN_OBJS += $(OUTPUT)builtin-test.o
+BUILTIN_OBJS += $(OUTPUT)builtin-inject.o
+
+PERFLIBS = $(LIB_FILE)
+
+# Files needed for the python binding, perf.so
+# pyrf is just an internal name needed for all those wrappers.
+# This has to be in sync with what is in the 'sources' variable in
+# tools/perf/util/setup.py
+
+PYRF_OBJS += $(OUTPUT)util/cpumap.o
+PYRF_OBJS += $(OUTPUT)util/ctype.o
+PYRF_OBJS += $(OUTPUT)util/evlist.o
+PYRF_OBJS += $(OUTPUT)util/evsel.o
+PYRF_OBJS += $(OUTPUT)util/python.o
+PYRF_OBJS += $(OUTPUT)util/thread_map.o
+PYRF_OBJS += $(OUTPUT)util/util.o
+PYRF_OBJS += $(OUTPUT)util/xyarray.o
+
+#
+# Platform specific tweaks
+#
+
+# We choose to avoid "if .. else if .. else .. endif endif"
+# because maintaining the nesting to match is a pain.  If
+# we had "elif" things would have been much nicer...
+
+-include config.mak.autogen
+-include config.mak
+
+ifndef NO_DWARF
+FLAGS_DWARF=$(ALL_CFLAGS) -ldw -lelf $(ALL_LDFLAGS) $(EXTLIBS)
+ifneq ($(call try-cc,$(SOURCE_DWARF),$(FLAGS_DWARF)),y)
+	msg := $(warning No libdw.h found or old libdw.h found or elfutils is older than 0.138, disables dwarf support. Please install new elfutils-devel/libdw-dev);
+	NO_DWARF := 1
+endif # Dwarf support
+endif # NO_DWARF
+
+-include arch/$(ARCH)/Makefile
+
+ifneq ($(OUTPUT),)
+	BASIC_CFLAGS += -I$(OUTPUT)
+endif
+
+FLAGS_LIBELF=$(ALL_CFLAGS) $(ALL_LDFLAGS) $(EXTLIBS)
+ifneq ($(call try-cc,$(SOURCE_LIBELF),$(FLAGS_LIBELF)),y)
+	FLAGS_GLIBC=$(ALL_CFLAGS) $(ALL_LDFLAGS)
+	ifneq ($(call try-cc,$(SOURCE_GLIBC),$(FLAGS_GLIBC)),y)
+		msg := $(error No gnu/libc-version.h found, please install glibc-dev[el]/glibc-static);
+	else
+		msg := $(error No libelf.h/libelf found, please install libelf-dev/elfutils-libelf-devel);
+	endif
+endif
+
+ifneq ($(call try-cc,$(SOURCE_ELF_MMAP),$(FLAGS_COMMON)),y)
+	BASIC_CFLAGS += -DLIBELF_NO_MMAP
+endif
+
+ifndef NO_DWARF
+ifeq ($(origin PERF_HAVE_DWARF_REGS), undefined)
+	msg := $(warning DWARF register mappings have not been defined for architecture $(ARCH), DWARF support disabled);
 else
-CFLAGS_ABI	:=$(call cc-option,-mapcs-32,-mabi=apcs-gnu) $(call cc-option,-mno-thumb-interwork,)
-endif
+	BASIC_CFLAGS += -DDWARF_SUPPORT
+	EXTLIBS += -lelf -ldw
+	LIB_OBJS += $(OUTPUT)util/probe-finder.o
+	LIB_OBJS += $(OUTPUT)util/dwarf-aux.o
+endif # PERF_HAVE_DWARF_REGS
+endif # NO_DWARF
 
-ifeq ($(CONFIG_ARM_UNWIND),y)
-CFLAGS_ABI	+=-funwind-tables
-endif
-
-ifeq ($(CONFIG_THUMB2_KERNEL),y)
-AFLAGS_AUTOIT	:=$(call as-option,-Wa$(comma)-mimplicit-it=always,-Wa$(comma)-mauto-it)
-AFLAGS_NOWARN	:=$(call as-option,-Wa$(comma)-mno-warn-deprecated,-Wa$(comma)-W)
-CFLAGS_THUMB2	:=-mthumb $(AFLAGS_AUTOIT) $(AFLAGS_NOWARN)
-AFLAGS_THUMB2	:=$(CFLAGS_THUMB2) -Wa$(comma)-mthumb
-# Work around buggy relocation from gas if requested:
-ifeq ($(CONFIG_THUMB2_AVOID_R_ARM_THM_JUMP11),y)
-CFLAGS_MODULE	+=-fno-optimize-sibling-calls
-endif
-endif
-
-# Need -Uarm for gcc < 3.x
-KBUILD_CFLAGS	+=$(CFLAGS_ABI) $(CFLAGS_THUMB2) $(arch-y) $(tune-y) $(call cc-option,-mshort-load-bytes,$(call cc-option,-malignment-traps,)) -msoft-float -Uarm
-KBUILD_AFLAGS	+=$(CFLAGS_ABI) $(AFLAGS_THUMB2) $(arch-y) $(tune-y) -include asm/unified.h -msoft-float
-
-CHECKFLAGS	+= -D__arm__
-
-#Default value
-head-y		:= arch/arm/kernel/head$(MMUEXT).o arch/arm/kernel/init_task.o
-textofs-y	:= 0x00008000
-textofs-$(CONFIG_ARCH_CLPS711X) := 0x00028000
-# We don't want the htc bootloader to corrupt kernel during resume
-textofs-$(CONFIG_PM_H1940)      := 0x00108000
-# SA1111 DMA bug: we don't want the kernel to live in precious DMA-able memory
-ifeq ($(CONFIG_ARCH_SA1100),y)
-textofs-$(CONFIG_SA1111) := 0x00208000
-endif
-
-# Machine directory name.  This list is sorted alphanumerically
-# by CONFIG_* macro name.
-machine-$(CONFIG_ARCH_AT91)		:= at91
-machine-$(CONFIG_ARCH_BCMRING)		:= bcmring
-machine-$(CONFIG_ARCH_CLPS711X)		:= clps711x
-machine-$(CONFIG_ARCH_CNS3XXX)		:= cns3xxx
-machine-$(CONFIG_ARCH_DAVINCI)		:= davinci
-machine-$(CONFIG_ARCH_DOVE)		:= dove
-machine-$(CONFIG_ARCH_EBSA110)		:= ebsa110
-machine-$(CONFIG_ARCH_EP93XX)		:= ep93xx
-machine-$(CONFIG_ARCH_GEMINI)		:= gemini
-machine-$(CONFIG_ARCH_H720X)		:= h720x
-machine-$(CONFIG_ARCH_HIGHBANK)		:= highbank
-machine-$(CONFIG_ARCH_INTEGRATOR)	:= integrator
-machine-$(CONFIG_ARCH_IOP13XX)		:= iop13xx
-machine-$(CONFIG_ARCH_IOP32X)		:= iop32x
-machine-$(CONFIG_ARCH_IOP33X)		:= iop33x
-machine-$(CONFIG_ARCH_IXP2000)		:= ixp2000
-machine-$(CONFIG_ARCH_IXP23XX)		:= ixp23xx
-machine-$(CONFIG_ARCH_IXP4XX)		:= ixp4xx
-machine-$(CONFIG_ARCH_KIRKWOOD)		:= kirkwood
-machine-$(CONFIG_ARCH_KS8695)		:= ks8695
-machine-$(CONFIG_ARCH_LPC32XX)		:= lpc32xx
-machine-$(CONFIG_ARCH_MMP)		:= mmp
-machine-$(CONFIG_ARCH_MSM)		:= msm
-machine-$(CONFIG_ARCH_MV78XX0)		:= mv78xx0
-machine-$(CONFIG_ARCH_IMX_V4_V5)	:= imx
-machine-$(CONFIG_ARCH_IMX_V6_V7)	:= imx
-machine-$(CONFIG_ARCH_MXS)		:= mxs
-machine-$(CONFIG_ARCH_NETX)		:= netx
-machine-$(CONFIG_ARCH_NOMADIK)		:= nomadik
-machine-$(CONFIG_ARCH_OMAP1)		:= omap1
-machine-$(CONFIG_ARCH_OMAP2)		:= omap2
-machine-$(CONFIG_ARCH_OMAP3)		:= omap2
-machine-$(CONFIG_ARCH_OMAP4)		:= omap2
-machine-$(CONFIG_ARCH_ORION5X)		:= orion5x
-machine-$(CONFIG_ARCH_PICOXCELL)	:= picoxcell
-machine-$(CONFIG_ARCH_PNX4008)		:= pnx4008
-machine-$(CONFIG_ARCH_PRIMA2)		:= prima2
-machine-$(CONFIG_ARCH_PXA)		:= pxa
-machine-$(CONFIG_ARCH_REALVIEW)		:= realview
-machine-$(CONFIG_ARCH_RPC)		:= rpc
-machine-$(CONFIG_ARCH_S3C24XX)		:= s3c24xx s3c2412 s3c2440
-machine-$(CONFIG_ARCH_S3C64XX)		:= s3c64xx
-machine-$(CONFIG_ARCH_S5P64X0)		:= s5p64x0
-machine-$(CONFIG_ARCH_S5PC100)		:= s5pc100
-machine-$(CONFIG_ARCH_S5PV210)		:= s5pv210
-machine-$(CONFIG_ARCH_EXYNOS4)		:= exynos
-machine-$(CONFIG_ARCH_EXYNOS5)		:= exynos
-machine-$(CONFIG_ARCH_SA1100)		:= sa1100
-machine-$(CONFIG_ARCH_SHARK)		:= shark
-machine-$(CONFIG_ARCH_SHMOBILE) 	:= shmobile
-machine-$(CONFIG_ARCH_TEGRA)		:= tegra
-machine-$(CONFIG_ARCH_U300)		:= u300
-machine-$(CONFIG_ARCH_U8500)		:= ux500
-machine-$(CONFIG_ARCH_VERSATILE)	:= versatile
-machine-$(CONFIG_ARCH_VEXPRESS)		:= vexpress
-machine-$(CONFIG_ARCH_VT8500)		:= vt8500
-machine-$(CONFIG_ARCH_W90X900)		:= w90x900
-machine-$(CONFIG_FOOTBRIDGE)		:= footbridge
-machine-$(CONFIG_MACH_SPEAR300)		:= spear3xx
-machine-$(CONFIG_MACH_SPEAR310)		:= spear3xx
-machine-$(CONFIG_MACH_SPEAR320)		:= spear3xx
-machine-$(CONFIG_MACH_SPEAR600)		:= spear6xx
-machine-$(CONFIG_ARCH_ZYNQ)		:= zynq
-
-# Platform directory name.  This list is sorted alphanumerically
-# by CONFIG_* macro name.
-plat-$(CONFIG_ARCH_MXC)		:= mxc
-plat-$(CONFIG_ARCH_OMAP)	:= omap
-plat-$(CONFIG_ARCH_S3C64XX)	:= samsung
-plat-$(CONFIG_ARCH_ZYNQ)	:= versatile
-plat-$(CONFIG_PLAT_IOP)		:= iop
-plat-$(CONFIG_PLAT_NOMADIK)	:= nomadik
-plat-$(CONFIG_PLAT_ORION)	:= orion
-plat-$(CONFIG_PLAT_PXA)		:= pxa
-plat-$(CONFIG_PLAT_S3C24XX)	:= s3c24xx samsung
-plat-$(CONFIG_PLAT_S5P)		:= s5p samsung
-plat-$(CONFIG_PLAT_SPEAR)	:= spear
-plat-$(CONFIG_PLAT_VERSATILE)	:= versatile
-
-ifeq ($(CONFIG_ARCH_EBSA110),y)
-# This is what happens if you forget the IOCS16 line.
-# PCMCIA cards stop working.
-CFLAGS_3c589_cs.o :=-DISA_SIXTEEN_BIT_PERIPHERAL
-export CFLAGS_3c589_cs.o
-endif
-
-# The byte offset of the kernel image in RAM from the start of RAM.
-TEXT_OFFSET := $(textofs-y)
-
-# The first directory contains additional information for the boot setup code
-ifneq ($(machine-y),)
-MACHINE  := arch/arm/mach-$(word 1,$(machine-y))/
+ifdef NO_NEWT
+	BASIC_CFLAGS += -DNO_NEWT_SUPPORT
 else
-MACHINE  :=
+	FLAGS_NEWT=$(ALL_CFLAGS) $(ALL_LDFLAGS) $(EXTLIBS) -lnewt
+	ifneq ($(call try-cc,$(SOURCE_NEWT),$(FLAGS_NEWT)),y)
+		msg := $(warning newt not found, disables TUI support. Please install newt-devel or libnewt-dev);
+		BASIC_CFLAGS += -DNO_NEWT_SUPPORT
+	else
+		# Fedora has /usr/include/slang/slang.h, but ubuntu /usr/include/slang.h
+		BASIC_CFLAGS += -I/usr/include/slang
+		EXTLIBS += -lnewt -lslang
+		LIB_OBJS += $(OUTPUT)util/ui/setup.o
+		LIB_OBJS += $(OUTPUT)util/ui/browser.o
+		LIB_OBJS += $(OUTPUT)util/ui/browsers/annotate.o
+		LIB_OBJS += $(OUTPUT)util/ui/browsers/hists.o
+		LIB_OBJS += $(OUTPUT)util/ui/browsers/map.o
+		LIB_OBJS += $(OUTPUT)util/ui/helpline.o
+		LIB_OBJS += $(OUTPUT)util/ui/progress.o
+		LIB_OBJS += $(OUTPUT)util/ui/util.o
+		LIB_H += util/ui/browser.h
+		LIB_H += util/ui/browsers/map.h
+		LIB_H += util/ui/helpline.h
+		LIB_H += util/ui/keysyms.h
+		LIB_H += util/ui/libslang.h
+		LIB_H += util/ui/progress.h
+		LIB_H += util/ui/util.h
+		LIB_H += util/ui/ui.h
+	endif
 endif
 
-machdirs := $(patsubst %,arch/arm/mach-%/,$(machine-y))
-platdirs := $(patsubst %,arch/arm/plat-%/,$(plat-y))
-
-ifeq ($(KBUILD_SRC),)
-KBUILD_CPPFLAGS += $(patsubst %,-I%include,$(machdirs) $(platdirs))
+ifdef NO_GTK2
+	BASIC_CFLAGS += -DNO_GTK2_SUPPORT
 else
-KBUILD_CPPFLAGS += $(patsubst %,-I$(srctree)/%include,$(machdirs) $(platdirs))
+	FLAGS_GTK2=$(ALL_CFLAGS) $(ALL_LDFLAGS) $(EXTLIBS) $(shell pkg-config --libs --cflags gtk+-2.0)
+	ifneq ($(call try-cc,$(SOURCE_GTK2),$(FLAGS_GTK2)),y)
+		msg := $(warning GTK2 not found, disables GTK2 support. Please install gtk2-devel or libgtk2.0-dev);
+		BASIC_CFLAGS += -DNO_GTK2_SUPPORT
+	else
+		BASIC_CFLAGS += $(shell pkg-config --cflags gtk+-2.0)
+		EXTLIBS += $(shell pkg-config --libs gtk+-2.0)
+		LIB_OBJS += $(OUTPUT)util/gtk/browser.o
+	endif
 endif
 
-export	TEXT_OFFSET GZFLAGS MMUEXT
-
-# Do we have FASTFPE?
-FASTFPE		:=arch/arm/fastfpe
-ifeq ($(FASTFPE),$(wildcard $(FASTFPE)))
-FASTFPE_OBJ	:=$(FASTFPE)/
-endif
-
-core-$(CONFIG_FPE_NWFPE)	+= arch/arm/nwfpe/
-core-$(CONFIG_FPE_FASTFPE)	+= $(FASTFPE_OBJ)
-core-$(CONFIG_VFP)		+= arch/arm/vfp/
-
-# TODO: Need to change to BCC flag controlling method
-core-$(CONFIG_VMWARE_MVP)   += arch/arm/mvp/
-
-ifeq ("true", $(findstring "true", "$(BUILD_VMWARE_FLAG)" "$(HTCBCC_VMWARE_FLAG)"))
-core-y   += arch/arm/mvp/
-endif
-
-# If we have a machine-specific directory, then include it in the build.
-core-y				+= arch/arm/kernel/ arch/arm/mm/ arch/arm/common/
-core-y				+= arch/arm/net/
-core-y				+= arch/arm/crypto/
-core-y				+= $(machdirs) $(platdirs)
-
-drivers-$(CONFIG_OPROFILE)      += arch/arm/oprofile/
-core-y				+= arch/arm/perfmon/
-
-libs-y				:= arch/arm/lib/ $(libs-y)
-
-# Default target when executing plain make
-ifeq ($(CONFIG_XIP_KERNEL),y)
-KBUILD_IMAGE := xipImage
-else ifeq ($(CONFIG_BUILD_ARM_APPENDED_DTB_IMAGE),y)
-KBUILD_IMAGE := zImage-dtb
+ifdef NO_LIBPERL
+	BASIC_CFLAGS += -DNO_LIBPERL
 else
-KBUILD_IMAGE := zImage
+       PERL_EMBED_LDOPTS = $(shell perl -MExtUtils::Embed -e ldopts 2>/dev/null)
+       PERL_EMBED_LDFLAGS = $(call strip-libs,$(PERL_EMBED_LDOPTS))
+       PERL_EMBED_LIBADD = $(call grep-libs,$(PERL_EMBED_LDOPTS))
+	PERL_EMBED_CCOPTS = `perl -MExtUtils::Embed -e ccopts 2>/dev/null`
+	FLAGS_PERL_EMBED=$(PERL_EMBED_CCOPTS) $(PERL_EMBED_LDOPTS)
+
+	ifneq ($(call try-cc,$(SOURCE_PERL_EMBED),$(FLAGS_PERL_EMBED)),y)
+		BASIC_CFLAGS += -DNO_LIBPERL
+	else
+               ALL_LDFLAGS += $(PERL_EMBED_LDFLAGS)
+               EXTLIBS += $(PERL_EMBED_LIBADD)
+		LIB_OBJS += $(OUTPUT)util/scripting-engines/trace-event-perl.o
+		LIB_OBJS += $(OUTPUT)scripts/perl/Perf-Trace-Util/Context.o
+	endif
 endif
 
-# Build the DT binary blobs if we have OF configured
-ifeq ($(CONFIG_USE_OF),y)
-KBUILD_DTBS := dtbs
-endif
-
-all:	$(KBUILD_IMAGE) $(KBUILD_DTBS)
-
-boot := arch/arm/boot
-
-archprepare:
-	$(Q)$(MAKE) $(build)=arch/arm/tools include/generated/mach-types.h
-
-# Convert bzImage to zImage
-bzImage: zImage
-
-zImage Image xipImage bootpImage uImage: vmlinux
-	$(Q)$(MAKE) $(build)=$(boot) MACHINE=$(MACHINE) $(boot)/$@
-
-zinstall uinstall install: vmlinux
-	$(Q)$(MAKE) $(build)=$(boot) MACHINE=$(MACHINE) $@
-
-%.dtb: scripts
-	$(Q)$(MAKE) $(build)=$(boot) MACHINE=$(MACHINE) $(boot)/$@
-
-dtbs: scripts
-	$(Q)$(MAKE) $(build)=$(boot) MACHINE=$(MACHINE) $(boot)/$@
-
-zImage-dtb: vmlinux scripts
-	$(Q)$(MAKE) $(build)=$(boot) MACHINE=$(MACHINE) $(boot)/$@
-
-# We use MRPROPER_FILES and CLEAN_FILES now
-archclean:
-	$(Q)$(MAKE) $(clean)=$(boot)
-
-# My testing targets (bypasses dependencies)
-bp:;	$(Q)$(MAKE) $(build)=$(boot) MACHINE=$(MACHINE) $(boot)/bootpImage
-i zi:;	$(Q)$(MAKE) $(build)=$(boot) MACHINE=$(MACHINE) $@
-
-
-define archhelp
-  echo  '* zImage        - Compressed kernel image (arch/$(ARCH)/boot/zImage)'
-  echo  '  Image         - Uncompressed kernel image (arch/$(ARCH)/boot/Image)'
-  echo  '* xipImage      - XIP kernel image, if configured (arch/$(ARCH)/boot/xipImage)'
-  echo  '  uImage        - U-Boot wrapped zImage'
-  echo  '  bootpImage    - Combined zImage and initial RAM disk'
-  echo  '                  (supply initrd image via make variable INITRD=<path>)'
-  echo  '* dtbs          - Build device tree blobs for enabled boards'
-  echo  '  install       - Install uncompressed kernel'
-  echo  '  zinstall      - Install compressed kernel'
-  echo  '  uinstall      - Install U-Boot wrapped compressed kernel'
-  echo  '                  Install using (your) ~/bin/$(INSTALLKERNEL) or'
-  echo  '                  (distribution) /sbin/$(INSTALLKERNEL) or'
-  echo  '                  install to $$(INSTALL_PATH) and run lilo'
+disable-python = $(eval $(disable-python_code))
+define disable-python_code
+  BASIC_CFLAGS += -DNO_LIBPYTHON
+  $(if $(1),$(warning No $(1) was found))
+  $(warning Python support won't be built)
 endef
+
+override PYTHON := \
+  $(call get-executable-or-default,PYTHON,python)
+
+ifndef PYTHON
+  $(call disable-python,python interpreter)
+  python-clean :=
+else
+
+  PYTHON_WORD := $(call shell-wordify,$(PYTHON))
+
+  # python extension build directories
+  PYTHON_EXTBUILD     := $(OUTPUT)python_ext_build/
+  PYTHON_EXTBUILD_LIB := $(PYTHON_EXTBUILD)lib/
+  PYTHON_EXTBUILD_TMP := $(PYTHON_EXTBUILD)tmp/
+  export PYTHON_EXTBUILD_LIB PYTHON_EXTBUILD_TMP
+
+  python-clean := rm -rf $(PYTHON_EXTBUILD) $(OUTPUT)python/perf.so
+
+  ifdef NO_LIBPYTHON
+    $(call disable-python)
+  else
+
+    override PYTHON_CONFIG := \
+      $(call get-executable-or-default,PYTHON_CONFIG,$(PYTHON)-config)
+
+    ifndef PYTHON_CONFIG
+      $(call disable-python,python-config tool)
+    else
+
+      PYTHON_CONFIG_SQ := $(call shell-sq,$(PYTHON_CONFIG))
+
+      PYTHON_EMBED_LDOPTS := $(shell $(PYTHON_CONFIG_SQ) --ldflags 2>/dev/null)
+      PYTHON_EMBED_LDFLAGS := $(call strip-libs,$(PYTHON_EMBED_LDOPTS))
+      PYTHON_EMBED_LIBADD := $(call grep-libs,$(PYTHON_EMBED_LDOPTS))
+      PYTHON_EMBED_CCOPTS := $(shell $(PYTHON_CONFIG_SQ) --cflags 2>/dev/null)
+      FLAGS_PYTHON_EMBED := $(PYTHON_EMBED_CCOPTS) $(PYTHON_EMBED_LDOPTS)
+
+      ifneq ($(call try-cc,$(SOURCE_PYTHON_EMBED),$(FLAGS_PYTHON_EMBED)),y)
+        $(call disable-python,Python.h (for Python 2.x))
+      else
+
+        ifneq ($(call try-cc,$(SOURCE_PYTHON_VERSION),$(FLAGS_PYTHON_EMBED)),y)
+          $(warning Python 3 is not yet supported; please set)
+          $(warning PYTHON and/or PYTHON_CONFIG appropriately.)
+          $(warning If you also have Python 2 installed, then)
+          $(warning try something like:)
+          $(warning $(and ,))
+          $(warning $(and ,)  make PYTHON=python2)
+          $(warning $(and ,))
+          $(warning Otherwise, disable Python support entirely:)
+          $(warning $(and ,))
+          $(warning $(and ,)  make NO_LIBPYTHON=1)
+          $(warning $(and ,))
+          $(error   $(and ,))
+        else
+          ALL_LDFLAGS += $(PYTHON_EMBED_LDFLAGS)
+          EXTLIBS += $(PYTHON_EMBED_LIBADD)
+          LIB_OBJS += $(OUTPUT)util/scripting-engines/trace-event-python.o
+          LIB_OBJS += $(OUTPUT)scripts/python/Perf-Trace-Util/Context.o
+          LANG_BINDINGS += $(OUTPUT)python/perf.so
+        endif
+
+      endif
+    endif
+  endif
+endif
+
+ifdef NO_JSON_EXPORT
+	BASIC_CFLAGS += -DNO_JSON_EXPORT
+else
+	LIB_OBJS += $(OUTPUT)util/scripting-engines/trace-event-json-export.o
+endif
+
+ifdef NO_DEMANGLE
+	BASIC_CFLAGS += -DNO_DEMANGLE
+else
+        ifdef HAVE_CPLUS_DEMANGLE
+		EXTLIBS += -liberty
+		BASIC_CFLAGS += -DHAVE_CPLUS_DEMANGLE
+        else
+		FLAGS_BFD=$(ALL_CFLAGS) $(ALL_LDFLAGS) $(EXTLIBS) -lbfd
+		has_bfd := $(call try-cc,$(SOURCE_BFD),$(FLAGS_BFD))
+		ifeq ($(has_bfd),y)
+			EXTLIBS += -lbfd
+		else
+			FLAGS_BFD_IBERTY=$(FLAGS_BFD) -liberty
+			has_bfd_iberty := $(call try-cc,$(SOURCE_BFD),$(FLAGS_BFD_IBERTY))
+			ifeq ($(has_bfd_iberty),y)
+				EXTLIBS += -lbfd -liberty
+			else
+				FLAGS_BFD_IBERTY_Z=$(FLAGS_BFD_IBERTY) -lz
+				has_bfd_iberty_z := $(call try-cc,$(SOURCE_BFD),$(FLAGS_BFD_IBERTY_Z))
+				ifeq ($(has_bfd_iberty_z),y)
+					EXTLIBS += -lbfd -liberty -lz
+				else
+					FLAGS_CPLUS_DEMANGLE=$(ALL_CFLAGS) $(ALL_LDFLAGS) $(EXTLIBS) -liberty
+					has_cplus_demangle := $(call try-cc,$(SOURCE_CPLUS_DEMANGLE),$(FLAGS_CPLUS_DEMANGLE))
+					ifeq ($(has_cplus_demangle),y)
+						EXTLIBS += -liberty
+						BASIC_CFLAGS += -DHAVE_CPLUS_DEMANGLE
+					else
+						msg := $(warning No bfd.h/libbfd found, install binutils-dev[el]/zlib-static to gain symbol demangling)
+						BASIC_CFLAGS += -DNO_DEMANGLE
+					endif
+				endif
+			endif
+		endif
+	endif
+endif
+
+
+ifdef NO_STRLCPY
+	BASIC_CFLAGS += -DNO_STRLCPY
+else
+	ifneq ($(call try-cc,$(SOURCE_STRLCPY),),y)
+		BASIC_CFLAGS += -DNO_STRLCPY
+	endif
+endif
+
+ifneq ($(findstring $(MAKEFLAGS),s),s)
+ifndef V
+	QUIET_CC       = @echo '   ' CC $@;
+	QUIET_AR       = @echo '   ' AR $@;
+	QUIET_LINK     = @echo '   ' LINK $@;
+	QUIET_MKDIR    = @echo '   ' MKDIR $@;
+	QUIET_GEN      = @echo '   ' GEN $@;
+	QUIET_FLEX     = @echo '   ' FLEX $@;
+	QUIET_BISON    = @echo '   ' BISON $@;
+endif
+endif
+
+ifdef ASCIIDOC8
+	export ASCIIDOC8
+endif
+
+# Shell quote (do not use $(call) to accommodate ancient setups);
+
+ETC_PERFCONFIG_SQ = $(subst ','\'',$(ETC_PERFCONFIG))
+
+DESTDIR_SQ = $(subst ','\'',$(DESTDIR))
+bindir_SQ = $(subst ','\'',$(bindir))
+bindir_relative_SQ = $(subst ','\'',$(bindir_relative))
+mandir_SQ = $(subst ','\'',$(mandir))
+infodir_SQ = $(subst ','\'',$(infodir))
+perfexecdir_SQ = $(subst ','\'',$(perfexecdir))
+template_dir_SQ = $(subst ','\'',$(template_dir))
+htmldir_SQ = $(subst ','\'',$(htmldir))
+prefix_SQ = $(subst ','\'',$(prefix))
+
+SHELL_PATH_SQ = $(subst ','\'',$(SHELL_PATH))
+
+LIBS = -Wl,--whole-archive $(PERFLIBS) -Wl,--no-whole-archive -Wl,--start-group $(EXTLIBS) -Wl,--end-group
+
+ALL_CFLAGS += $(BASIC_CFLAGS)
+ALL_CFLAGS += $(ARCH_CFLAGS)
+ALL_LDFLAGS += $(BASIC_LDFLAGS)
+
+export INSTALL SHELL_PATH
+
+
+### Build rules
+
+SHELL = $(SHELL_PATH)
+
+all: shell_compatibility_test $(ALL_PROGRAMS) $(LANG_BINDINGS) $(OTHER_PROGRAMS)
+
+please_set_SHELL_PATH_to_a_more_modern_shell:
+	@$$(:)
+
+shell_compatibility_test: please_set_SHELL_PATH_to_a_more_modern_shell
+
+strip: $(PROGRAMS) $(OUTPUT)perf
+	$(STRIP) $(STRIP_OPTS) $(PROGRAMS) $(OUTPUT)perf
+
+$(OUTPUT)perf.o: perf.c $(OUTPUT)common-cmds.h $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -DPERF_VERSION='"$(PERF_VERSION)"' \
+		'-DPERF_HTML_PATH="$(htmldir_SQ)"' \
+		$(ALL_CFLAGS) -c $(filter %.c,$^) -o $@
+
+$(OUTPUT)perf: $(OUTPUT)perf.o $(BUILTIN_OBJS) $(PERFLIBS)
+	$(QUIET_LINK)$(CC) $(ALL_CFLAGS) $(ALL_LDFLAGS) $(OUTPUT)perf.o \
+               $(BUILTIN_OBJS) $(LIBS) -o $@
+
+$(OUTPUT)builtin-help.o: builtin-help.c $(OUTPUT)common-cmds.h $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) \
+		'-DPERF_HTML_PATH="$(htmldir_SQ)"' \
+		'-DPERF_MAN_PATH="$(mandir_SQ)"' \
+		'-DPERF_INFO_PATH="$(infodir_SQ)"' $<
+
+$(OUTPUT)builtin-timechart.o: builtin-timechart.c $(OUTPUT)common-cmds.h $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) \
+		'-DPERF_HTML_PATH="$(htmldir_SQ)"' \
+		'-DPERF_MAN_PATH="$(mandir_SQ)"' \
+		'-DPERF_INFO_PATH="$(infodir_SQ)"' $<
+
+$(OUTPUT)common-cmds.h: util/generate-cmdlist.sh command-list.txt
+
+$(OUTPUT)common-cmds.h: $(wildcard Documentation/perf-*.txt)
+	$(QUIET_GEN). util/generate-cmdlist.sh > $@+ && mv $@+ $@
+
+$(SCRIPTS) : % : %.sh
+	$(QUIET_GEN)$(INSTALL) '$@.sh' '$(OUTPUT)$@'
+
+# These can record PERF_VERSION
+$(OUTPUT)perf.o perf.spec \
+	$(SCRIPTS) \
+	: $(OUTPUT)PERF-VERSION-FILE
+
+.SUFFIXES:
+.SUFFIXES: .o .c .S .s
+
+# These two need to be here so that when O= is not used they take precedence
+# over the general rule for .o
+
+$(OUTPUT)util/%-flex.o: $(OUTPUT)util/%-flex.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) -Iutil/ -w $<
+
+$(OUTPUT)util/%-bison.o: $(OUTPUT)util/%-bison.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) -DYYENABLE_NLS=0 -DYYLTYPE_IS_TRIVIAL=0 -Iutil/ -w $<
+
+$(OUTPUT)%.o: %.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) $<
+$(OUTPUT)%.i: %.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -E $(ALL_CFLAGS) $<
+$(OUTPUT)%.s: %.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -S $(ALL_CFLAGS) $<
+$(OUTPUT)%.o: %.S
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) $<
+$(OUTPUT)%.s: %.S
+	$(QUIET_CC)$(CC) -o $@ -E $(ALL_CFLAGS) $<
+
+$(OUTPUT)util/exec_cmd.o: util/exec_cmd.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) \
+		'-DPERF_EXEC_PATH="$(perfexecdir_SQ)"' \
+		'-DBINDIR="$(bindir_relative_SQ)"' \
+		'-DPREFIX="$(prefix_SQ)"' \
+		$<
+
+$(OUTPUT)util/config.o: util/config.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) -DETC_PERFCONFIG='"$(ETC_PERFCONFIG_SQ)"' $<
+
+$(OUTPUT)util/ui/browser.o: util/ui/browser.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) -DENABLE_SLFUTURE_CONST $<
+
+$(OUTPUT)util/ui/browsers/annotate.o: util/ui/browsers/annotate.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) -DENABLE_SLFUTURE_CONST $<
+
+$(OUTPUT)util/ui/browsers/hists.o: util/ui/browsers/hists.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) -DENABLE_SLFUTURE_CONST $<
+
+$(OUTPUT)util/ui/browsers/map.o: util/ui/browsers/map.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) -DENABLE_SLFUTURE_CONST $<
+
+$(OUTPUT)util/rbtree.o: ../../lib/rbtree.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) -DETC_PERFCONFIG='"$(ETC_PERFCONFIG_SQ)"' $<
+
+$(OUTPUT)util/scripting-engines/trace-event-perl.o: util/scripting-engines/trace-event-perl.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) $(PERL_EMBED_CCOPTS) -Wno-redundant-decls -Wno-strict-prototypes -Wno-unused-parameter -Wno-shadow $<
+
+$(OUTPUT)scripts/perl/Perf-Trace-Util/Context.o: scripts/perl/Perf-Trace-Util/Context.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) $(PERL_EMBED_CCOPTS) -Wno-redundant-decls -Wno-strict-prototypes -Wno-unused-parameter -Wno-nested-externs $<
+
+$(OUTPUT)util/scripting-engines/trace-event-python.o: util/scripting-engines/trace-event-python.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) $(PYTHON_EMBED_CCOPTS) -Wno-redundant-decls -Wno-strict-prototypes -Wno-unused-parameter -Wno-shadow $<
+
+$(OUTPUT)scripts/python/Perf-Trace-Util/Context.o: scripts/python/Perf-Trace-Util/Context.c $(OUTPUT)PERF-CFLAGS
+	$(QUIET_CC)$(CC) -o $@ -c $(ALL_CFLAGS) $(PYTHON_EMBED_CCOPTS) -Wno-redundant-decls -Wno-strict-prototypes -Wno-unused-parameter -Wno-nested-externs $<
+
+$(OUTPUT)perf-%: %.o $(PERFLIBS)
+	$(QUIET_LINK)$(CC) $(ALL_CFLAGS) -o $@ $(ALL_LDFLAGS) $(filter %.o,$^) $(LIBS)
+
+$(LIB_OBJS) $(BUILTIN_OBJS): $(LIB_H)
+$(patsubst perf-%,%.o,$(PROGRAMS)): $(LIB_H) $(wildcard */*.h)
+
+# we compile into subdirectories. if the target directory is not the source directory, they might not exists. So
+# we depend the various files onto their directories.
+DIRECTORY_DEPS = $(LIB_OBJS) $(BUILTIN_OBJS) $(OUTPUT)PERF-VERSION-FILE $(OUTPUT)common-cmds.h
+$(DIRECTORY_DEPS): | $(sort $(dir $(DIRECTORY_DEPS)))
+# In the second step, we make a rule to actually create these directories
+$(sort $(dir $(DIRECTORY_DEPS))):
+	$(QUIET_MKDIR)$(MKDIR) -p $@ 2>/dev/null
+
+$(LIB_FILE): $(LIB_OBJS)
+	$(QUIET_AR)$(RM) $@ && $(AR) rcs $@ $(LIB_OBJS)
+
+help:
+	@echo 'Perf make targets:'
+	@echo '  doc		- make *all* documentation (see below)'
+	@echo '  man		- make manpage documentation (access with man <foo>)'
+	@echo '  html		- make html documentation'
+	@echo '  info		- make GNU info documentation (access with info <foo>)'
+	@echo '  pdf		- make pdf documentation'
+	@echo '  TAGS		- use etags to make tag information for source browsing'
+	@echo '  tags		- use ctags to make tag information for source browsing'
+	@echo '  cscope	- use cscope to make interactive browsing database'
+	@echo ''
+	@echo 'Perf install targets:'
+	@echo '  NOTE: documentation build requires asciidoc, xmlto packages to be installed'
+	@echo '  HINT: use "make prefix=<path> <install target>" to install to a particular'
+	@echo '        path like make prefix=/usr/local install install-doc'
+	@echo '  install	- install compiled binaries'
+	@echo '  install-doc	- install *all* documentation'
+	@echo '  install-man	- install manpage documentation'
+	@echo '  install-html	- install html documentation'
+	@echo '  install-info	- install GNU info documentation'
+	@echo '  install-pdf	- install pdf documentation'
+	@echo ''
+	@echo '  quick-install-doc	- alias for quick-install-man'
+	@echo '  quick-install-man	- install the documentation quickly'
+	@echo '  quick-install-html	- install the html documentation quickly'
+	@echo ''
+	@echo 'Perf maintainer targets:'
+	@echo '  clean			- clean all binary objects and build output'
+
+doc:
+	$(MAKE) -C Documentation all
+
+man:
+	$(MAKE) -C Documentation man
+
+html:
+	$(MAKE) -C Documentation html
+
+info:
+	$(MAKE) -C Documentation info
+
+pdf:
+	$(MAKE) -C Documentation pdf
+
+TAGS:
+	$(RM) TAGS
+	$(FIND) . -name '*.[hcS]' -print | xargs etags -a
+
+tags:
+	$(RM) tags
+	$(FIND) . -name '*.[hcS]' -print | xargs ctags -a
+
+cscope:
+	$(RM) cscope*
+	$(FIND) . -name '*.[hcS]' -print | xargs cscope -b
+
+### Detect prefix changes
+TRACK_CFLAGS = $(subst ','\'',$(ALL_CFLAGS)):\
+             $(bindir_SQ):$(perfexecdir_SQ):$(template_dir_SQ):$(prefix_SQ)
+
+$(OUTPUT)PERF-CFLAGS: .FORCE-PERF-CFLAGS
+	@FLAGS='$(TRACK_CFLAGS)'; \
+	    if test x"$$FLAGS" != x"`cat $(OUTPUT)PERF-CFLAGS 2>/dev/null`" ; then \
+		echo 1>&2 "    * new build flags or prefix"; \
+		echo "$$FLAGS" >$(OUTPUT)PERF-CFLAGS; \
+            fi
+
+### Testing rules
+
+# GNU make supports exporting all variables by "export" without parameters.
+# However, the environment gets quite big, and some programs have problems
+# with that.
+
+check: $(OUTPUT)common-cmds.h
+	if sparse; \
+	then \
+		for i in *.c */*.c; \
+		do \
+			sparse $(ALL_CFLAGS) $(SPARSE_FLAGS) $$i || exit; \
+		done; \
+	else \
+		exit 1; \
+	fi
+
+### Installation rules
+
+ifneq ($(filter /%,$(firstword $(perfexecdir))),)
+perfexec_instdir = $(perfexecdir)
+else
+perfexec_instdir = $(prefix)/$(perfexecdir)
+endif
+perfexec_instdir_SQ = $(subst ','\'',$(perfexec_instdir))
+
+install: all
+	$(INSTALL) -d -m 755 '$(DESTDIR_SQ)$(bindir_SQ)'
+	$(INSTALL) $(OUTPUT)perf '$(DESTDIR_SQ)$(bindir_SQ)'
+	$(INSTALL) -d -m 755 '$(DESTDIR_SQ)$(perfexec_instdir_SQ)/scripts/perl/Perf-Trace-Util/lib/Perf/Trace'
+	$(INSTALL) -d -m 755 '$(DESTDIR_SQ)$(perfexec_instdir_SQ)/scripts/perl/bin'
+	$(INSTALL) $(OUTPUT)perf-archive -t '$(DESTDIR_SQ)$(perfexec_instdir_SQ)'
+	$(INSTALL) scripts/perl/Perf-Trace-Util/lib/Perf/Trace/* -t '$(DESTDIR_SQ)$(perfexec_instdir_SQ)/scripts/perl/Perf-Trace-Util/lib/Perf/Trace'
+	$(INSTALL) scripts/perl/*.pl -t '$(DESTDIR_SQ)$(perfexec_instdir_SQ)/scripts/perl'
+	$(INSTALL) scripts/perl/bin/* -t '$(DESTDIR_SQ)$(perfexec_instdir_SQ)/scripts/perl/bin'
+	$(INSTALL) -d -m 755 '$(DESTDIR_SQ)$(perfexec_instdir_SQ)/scripts/python/Perf-Trace-Util/lib/Perf/Trace'
+	$(INSTALL) -d -m 755 '$(DESTDIR_SQ)$(perfexec_instdir_SQ)/scripts/python/bin'
+	$(INSTALL) scripts/python/Perf-Trace-Util/lib/Perf/Trace/* -t '$(DESTDIR_SQ)$(perfexec_instdir_SQ)/scripts/python/Perf-Trace-Util/lib/Perf/Trace'
+	$(INSTALL) scripts/python/*.py -t '$(DESTDIR_SQ)$(perfexec_instdir_SQ)/scripts/python'
+	$(INSTALL) scripts/python/bin/* -t '$(DESTDIR_SQ)$(perfexec_instdir_SQ)/scripts/python/bin'
+
+install-python_ext:
+	$(PYTHON_WORD) util/setup.py --quiet install --root='/$(DESTDIR_SQ)'
+
+install-doc:
+	$(MAKE) -C Documentation install
+
+install-man:
+	$(MAKE) -C Documentation install-man
+
+install-html:
+	$(MAKE) -C Documentation install-html
+
+install-info:
+	$(MAKE) -C Documentation install-info
+
+install-pdf:
+	$(MAKE) -C Documentation install-pdf
+
+quick-install-doc:
+	$(MAKE) -C Documentation quick-install
+
+quick-install-man:
+	$(MAKE) -C Documentation quick-install-man
+
+quick-install-html:
+	$(MAKE) -C Documentation quick-install-html
+
+### Cleaning rules
+
+clean:
+	$(RM) $(LIB_OBJS) $(BUILTIN_OBJS) $(LIB_FILE) $(OUTPUT)perf-archive $(OUTPUT)perf.o $(LANG_BINDINGS)
+	$(RM) $(ALL_PROGRAMS) perf
+	$(RM) *.spec *.pyc *.pyo */*.pyc */*.pyo $(OUTPUT)common-cmds.h TAGS tags cscope*
+	$(MAKE) -C Documentation/ clean
+	$(RM) $(OUTPUT)PERF-VERSION-FILE $(OUTPUT)PERF-CFLAGS
+	$(RM) $(OUTPUT)util/*-{bison,flex}*
+	$(python-clean)
+
+.PHONY: all install clean strip
+.PHONY: shell_compatibility_test please_set_SHELL_PATH_to_a_more_modern_shell
+.PHONY: .FORCE-PERF-VERSION-FILE TAGS tags cscope .FORCE-PERF-CFLAGS
