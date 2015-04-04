@@ -339,7 +339,8 @@ endif
 CC		+= \
 	$(kernel_arch_variant_cflags) \
 	-pthread \
-	$(GRAPHITE_KERNEL_FLAGS)
+	$(GRAPHITE_KERNEL_FLAGS) \
+	-fstack-protector
 CPP		= $(CC) -E
 AR		= $(CROSS_COMPILE)ar
 NM		= $(CROSS_COMPILE)nm
@@ -374,10 +375,9 @@ LINUXINCLUDE    := -I$(srctree)/arch/$(hdr-arch)/include \
 KBUILD_CPPFLAGS := -D__KERNEL__
 
 KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
-		   -fno-strict-aliasing -fno-common \
-		   -Werror-implicit-function-declaration \
-		   -Wno-format-security \
-		   -fno-delete-null-pointer-checks
+		   -fno-common -Werror-implicit-function-declaration \
+		   -Wno-format-security -fno-delete-null-pointer-checks \
+		   -fno-strict-aliasing
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS   := -D__ASSEMBLY__
