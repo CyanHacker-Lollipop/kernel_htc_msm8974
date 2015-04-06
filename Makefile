@@ -332,7 +332,11 @@ include $(srctree)/scripts/Kbuild.include
 
 AS		= $(CROSS_COMPILE)as
 LD		= $(CROSS_COMPILE)ld
+ifeq ($(strip $(USE_KERNEL_OPTIMIZATIONS)),true)
 CC		= $(CROSS_COMPILE)gcc
+else
+REAL_CC		= $(CROSS_COMPILE)gcc
+endif
 ifeq ($(strip $(USE_KERNEL_OPTIMIZATIONS)),true)
 ifeq ($(strip $(O3_OPTIMIZATIONS)),true)
 CC		+= -O3
