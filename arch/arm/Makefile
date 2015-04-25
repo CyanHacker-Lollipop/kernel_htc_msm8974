@@ -17,9 +17,7 @@ endif
 
 OBJCOPYFLAGS	:=-O binary -R .comment -S
 GZFLAGS		:=-9
-ifeq ($(strip $(USE_KERNEL_OPTIMIZATIONS)),true)
-KBUILD_CFLAGS	+=-pipe
-endif
+#KBUILD_CFLAGS	+=-pipe
 # Explicitly specifiy 32-bit ARM ISA since toolchain default can be -mthumb:
 KBUILD_CFLAGS	+=$(call cc-option,-marm,)
 
