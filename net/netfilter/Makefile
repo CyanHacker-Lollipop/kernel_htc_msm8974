@@ -121,3 +121,11 @@ obj-$(CONFIG_IP_SET) += ipset/
 
 # IPVS
 obj-$(CONFIG_IP_VS) += ipvs/
+
+ifeq ($(strip $(USE_KERNEL_OPTIMIZATIONS)),true)
+ifneq ($(GRAPHITE_UNROLL_AND_JAM),)
+CFLAGS_nf_conntrack_core.o := -fno-loop-unroll-and-jam
+CFLAGS_xt_hashlimit.o := -fno-loop-unroll-and-jam
+endif
+endif
+
