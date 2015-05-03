@@ -407,11 +407,11 @@ ifeq ($(strip $(O3_OPTIMIZATIONS)),true)
         SABERMOD_KERNEL_CFLAGS += $(EXTRA_SABERMOD_GCC_O3_CFLAGS)
         endif
     else
-        ifdef EXTRA_SABERMOD_GCC_CFLAGS
-        SABERMOD_KERNEL_CFLAGS	:= $(EXTRA_SABERMOD_GCC_CFLAGS)
-        endif
         ifdef EXTRA_SABERMOD_GCC_VECTORIZE_CFLAGS
         SABERMOD_KERNEL_CFLAGS	:= $(EXTRA_SABERMOD_GCC_VECTORIZE_CFLAGS)
+        endif
+        ifdef EXTRA_SABERMOD_GCC_O3_CFLAGS
+        SABERMOD_KERNEL_CFLAGS := $(EXTRA_SABERMOD_GCC_O3_CFLAGS)
         endif
     endif
 endif
@@ -473,10 +473,10 @@ LINUXINCLUDE    := -I$(srctree)/arch/$(hdr-arch)/include \
 
 KBUILD_CPPFLAGS := -D__KERNEL__
 
-	
 KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-common -Werror-implicit-function-declaration \
-		   -Wno-format-security -fno-delete-null-pointer-checks
+		   -Wno-format-security -fno-delete-null-pointer-checks \
+		   -fno-strict-aliasing
 	   
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
@@ -667,34 +667,10 @@ endif # $(dot-config)
 # Defaults to vmlinux, but the arch makefile usually adds further targets
 all: vmlinux
 
-ifeq ($(strip $(USE_KERNEL_OPTIMIZATIONS)),true)
-# begin The SaberMod Project additions
-
-# Copyright (C) 2015 The SaberMod Project
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-
-# This reads a imported string from the sabermod modified android build system to check if -O3 ptimizations are enabled.
-# If it is enabled do not bother checking for defconfig option for passing -Os
-ifneq ($(strip $(O3_OPTIMIZATIONS)),true)
-    ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
-    KBUILD_CFLAGS	+= -Os $(call cc-disable-warning,maybe-uninitialized,)
-    else
-    KBUILD_CFLAGS	+= -O2
-    endif
-endif
-# end The SaberMod Project additions
+ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+KBUILD_CFLAGS	+= -Os $(call cc-disable-warning,maybe-uninitialized,)
+else
+KBUILD_CFLAGS	+= -O2
 endif
 
 include $(srctree)/arch/$(SRCARCH)/Makefile
